@@ -99,11 +99,24 @@ function extractSessionData(entries) {
         + (outputTokens * pricing.output);
 
       const tools = [];
+      const toolCalls = [];
+      let assistantText = '';
       if (Array.isArray(entry.message.content)) {
         for (const block of entry.message.content) {
-          if (block.type === 'tool_use' && block.name) tools.push(block.name);
+          if (block.type === 'tool_use' && block.name) {
+            tools.push(block.name);
+            const input = {};
+            if (block.input && typeof block.input === 'object') {
+              for (const [k, v] of Object.entries(block.input)) {
+                input[k] = typeof v === 'string' && v.length > 500 ? v.substring(0, 497) + '…' : v;
+              }
+            }
+            toolCalls.push({ id: block.id || null, name: block.name, input });
+          }
+          if (block.type === 'text' && block.text) assistantText += block.text;
         }
       }
+      if (assistantText.length > 2000) assistantText = assistantText.substring(0, 1997) + '…';
 
       queries.push({
         userPrompt: pendingUserMessage?.text || null,
@@ -117,6 +130,8 @@ function extractSessionData(entries) {
         totalTokens,
         cost,
         tools,
+        toolCalls,
+        assistantText: assistantText || null,
       });
     }
   }

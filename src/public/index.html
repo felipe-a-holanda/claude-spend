@@ -595,11 +595,17 @@
 
   .query-list { display: flex; flex-direction: column; gap: 8px; }
   .query-item {
-    display: grid; grid-template-columns: 36px 1fr auto;
-    gap: 14px; padding: 14px 16px; border-radius: var(--radius-sm);
-    background: var(--bg); align-items: start;
+    border-radius: var(--radius-sm);
+    background: var(--bg);
     transition: background 0.1s;
+    overflow: hidden;
   }
+  .query-header {
+    display: grid; grid-template-columns: 36px 1fr auto;
+    gap: 14px; padding: 14px 16px;
+    align-items: start;
+  }
+  .query-header[onclick] { cursor: pointer; }
   .query-item:hover { background: #EEF2FF; }
   .query-num {
     width: 28px; height: 28px; border-radius: 8px; background: var(--white);
@@ -612,6 +618,39 @@
   .query-tokens-col { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; }
   .query-tokens-col .total { font-family: var(--mono); font-size: 14px; font-weight: 700; }
   .query-tokens-col .detail { font-size: 12px; color: var(--text-tertiary); font-weight: 500; }
+  .query-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+  .query-item.expanded .query-body { max-height: 2000px; }
+  .query-body-inner { padding: 0 16px 14px 62px; display: flex; flex-direction: column; gap: 6px; }
+  .query-assistant-text {
+    font-size: 12px; color: var(--text-secondary); line-height: 1.6;
+    padding: 8px 12px; background: var(--white); border-radius: 6px;
+    border: 1px solid var(--border); border-left: 3px solid var(--indigo);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .query-tool-calls { display: flex; flex-direction: column; gap: 3px; }
+  .query-tool-row {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 6px 10px; border-radius: 6px;
+    background: var(--white); border: 1px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+    font-size: 12px;
+  }
+  .query-tool-row:hover { background: #EEF2FF; }
+  .query-tool-name {
+    font-size: 11px; font-weight: 700; color: var(--indigo);
+    background: rgba(99,102,241,0.08); border-radius: 4px;
+    padding: 2px 6px; white-space: nowrap; flex-shrink: 0;
+  }
+  .query-tool-hint { color: var(--text-tertiary); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .query-tool-chevron { color: var(--text-tertiary); flex-shrink: 0; transition: transform 0.2s; }
+  .query-tool-row.open .query-tool-chevron { transform: rotate(90deg); }
+  .query-tool-input {
+    display: none; margin-top: 4px; padding: 8px 10px;
+    background: var(--surface); border-radius: 6px; border: 1px solid var(--border);
+    font-family: var(--mono); font-size: 11px; color: var(--text-secondary);
+    white-space: pre-wrap; word-break: break-all; line-height: 1.55;
+  }
+  .query-tool-row.open + .query-tool-input { display: block; }
 
   /* ---- FOOTER ---- */
   .footer {
@@ -1476,6 +1515,8 @@ function groupSessionQueries(queries) {
         totalTokens: q.totalTokens,
         cost: q.cost || 0,
         continuations: 0,
+        toolCalls: q.toolCalls ? [...q.toolCalls] : [],
+        assistantText: q.assistantText || null,
       };
     } else if (current) {
       current.inputTokens += q.inputTokens;
@@ -1485,6 +1526,7 @@ function groupSessionQueries(queries) {
       current.totalTokens += q.totalTokens;
       current.cost += (q.cost || 0);
       current.continuations++;
+      if (q.toolCalls) current.toolCalls.push(...q.toolCalls);
     }
   }
   if (current) grouped.push(current);
@@ -1711,13 +1753,43 @@ function openDrilldown(sessionId) {
   document.getElementById('queryList').innerHTML = grouped.map((q, i) => {
     const cont = q.continuations > 0 ? ` + ${q.continuations} tool uses` : '';
     const cached = q.cacheReadTokens || 0;
+    const hasDetail = (q.toolCalls && q.toolCalls.length > 0) || q.assistantText;
+
+    let bodyHtml = '';
+    if (hasDetail) {
+      const textHtml = q.assistantText
+        ? `<div class="query-assistant-text">${escapeHtml(q.assistantText)}</div>`
+        : '';
+
+      const toolCallsHtml = q.toolCalls && q.toolCalls.length > 0
+        ? `<div class="query-tool-calls">${q.toolCalls.map(tc => {
+            const hint = Object.entries(tc.input || {})
+              .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+              .join('  ')
+              .substring(0, 80);
+            const inputJson = JSON.stringify(tc.input || {}, null, 2);
+            return `<div class="query-tool-row" onclick="this.classList.toggle('open')">
+              <span class="query-tool-name">${escapeHtml(tc.name)}</span>
+              <span class="query-tool-hint">${escapeHtml(hint)}</span>
+              <span class="query-tool-chevron">▶</span>
+            </div>
+            <pre class="query-tool-input">${escapeHtml(inputJson)}</pre>`;
+          }).join('')}</div>`
+        : '';
+
+      bodyHtml = `<div class="query-body"><div class="query-body-inner">${textHtml}${toolCallsHtml}</div></div>`;
+    }
+
     return `<div class="query-item">
-      <div class="query-num">${i + 1}</div>
-      <div class="query-prompt">${escapeHtml(q.prompt.substring(0, 500))}</div>
-      <div class="query-tokens-col">
-        <div class="total">${fmt(q.totalTokens)}</div>
-        <div class="detail">${fmt(q.inputTokens)} in / ${fmt(cached)} cached / ${fmt(q.outputTokens)} out${cont}</div>
+      <div class="query-header"${hasDetail ? ' onclick="this.closest(\'.query-item\').classList.toggle(\'expanded\')"' : ''}>
+        <div class="query-num">${i + 1}</div>
+        <div class="query-prompt${!q.prompt ? ' no-prompt' : ''}">${escapeHtml((q.prompt || '(tool continuation)').substring(0, 500))}</div>
+        <div class="query-tokens-col">
+          <div class="total">${fmt(q.totalTokens)}</div>
+          <div class="detail">${fmt(q.inputTokens)} in / ${fmt(cached)} cached / ${fmt(q.outputTokens)} out${cont}</div>
+        </div>
       </div>
+      ${bodyHtml}
     </div>`;
   }).join('');
 
