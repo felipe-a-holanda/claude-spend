@@ -251,11 +251,12 @@
     padding: 14px 20px; margin-bottom: 8px;
     border: 1px solid var(--border);
     box-shadow: var(--shadow-sm);
-    cursor: pointer; transition: box-shadow 0.2s;
+    transition: box-shadow 0.2s;
   }
   .insight-card:hover { box-shadow: var(--shadow-md); }
   .insight-top {
     display: flex; align-items: center; gap: 12px;
+    cursor: pointer;
   }
   .insight-arrow {
     margin-left: auto; flex-shrink: 0;
@@ -286,6 +287,18 @@
     font-size: 13px; line-height: 1.6;
     padding: 8px 0 0 40px; color: var(--indigo); font-weight: 600;
   }
+  .insight-linked-sessions {
+    padding: 8px 0 4px 40px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .insight-session-link {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 7px 12px; border-radius: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    cursor: pointer; transition: background 0.15s, box-shadow 0.15s;
+  }
+  .insight-session-link:hover { background: var(--white); box-shadow: var(--shadow-sm); }
+  .insight-session-label { font-size: 13px; font-weight: 500; color: var(--indigo); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .insight-session-meta { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; flex-shrink: 0; }
 
   /* ---- CHARTS ---- */
   .charts-grid {
@@ -1068,14 +1081,25 @@ function renderInsights() {
   document.getElementById('insightsList').innerHTML = insights.map((ins, i) => {
     const detailHtml = ins.description ? `<div class="insight-detail">${escapeHtml(ins.description)}</div>` : '';
     const actionHtml = ins.action ? `<div class="insight-action-tip">${escapeHtml(ins.action)}</div>` : '';
-    return `<div class="insight-card ${ins.type} animate delay-${Math.min(i + 2, 5)}" onclick="this.classList.toggle('expanded')">
-      <div class="insight-top">
+    let linkedHtml = '';
+    if (ins.linkedSessions && ins.linkedSessions.length) {
+      const links = ins.linkedSessions.map(s =>
+        `<div class="insight-session-link" onclick="event.stopPropagation();openDrilldown('${escapeHtml(s.sessionId)}')">
+          <span class="insight-session-label">${escapeHtml(s.label.substring(0, 60))}${s.label.length > 60 ? '…' : ''}</span>
+          <span class="insight-session-meta">${s.queryCount} msgs &middot; ${fmt(s.tokens)} tokens</span>
+        </div>`
+      ).join('');
+      linkedHtml = `<div class="insight-linked-sessions">${links}</div>`;
+    }
+    return `<div class="insight-card ${ins.type} animate delay-${Math.min(i + 2, 5)}">
+      <div class="insight-top" onclick="this.closest('.insight-card').classList.toggle('expanded')">
         <div class="insight-indicator">${emojis[ins.type] || ''}</div>
         <div class="insight-title">${escapeHtml(ins.title)}</div>
         <div class="insight-arrow"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 4.5L6 7.5L9 4.5"/></svg></div>
       </div>
       <div class="insight-expand">
         ${detailHtml}
+        ${linkedHtml}
         ${actionHtml}
       </div>
     </div>`;

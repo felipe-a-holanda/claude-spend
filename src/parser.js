@@ -478,9 +478,10 @@ function generateInsights(sessions, allPrompts, totals) {
   // 3. Marathon conversations
   const turnCounts = sessions.map(s => s.queryCount);
   const medianTurns = turnCounts.sort((a, b) => a - b)[Math.floor(turnCounts.length / 2)] || 0;
-  const longCount = sessions.filter(s => s.queryCount > 200).length;
+  const longSessions3 = sessions.filter(s => s.queryCount > 200).sort((a, b) => b.totalTokens - a.totalTokens);
+  const longCount = longSessions3.length;
   if (longCount >= 3) {
-    const longTokens = sessions.filter(s => s.queryCount > 200).reduce((s, ses) => s + ses.totalTokens, 0);
+    const longTokens = longSessions3.reduce((s, ses) => s + ses.totalTokens, 0);
     const longPct = ((longTokens / Math.max(totals.totalTokens, 1)) * 100).toFixed(0);
     insights.push({
       id: 'marathon-sessions',
@@ -488,6 +489,7 @@ function generateInsights(sessions, allPrompts, totals) {
       title: `Just ${longCount} long conversations used ${longPct}% of all your tokens`,
       description: `You have ${longCount} conversations with over 200 messages each. These alone consumed ${fmt(longTokens)} tokens -- that's ${longPct}% of everything. Meanwhile, your typical conversation is about ${medianTurns} messages. Long conversations aren't always bad, but they're disproportionately expensive because of how context builds up.`,
       action: 'Try keeping one conversation per task. When a conversation starts drifting into different topics, that is a good time to start a new one.',
+      linkedSessions: longSessions3.slice(0, 8).map(s => ({ sessionId: s.sessionId, label: s.firstPrompt, tokens: s.totalTokens, queryCount: s.queryCount })),
     });
   }
 
