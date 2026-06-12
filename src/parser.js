@@ -230,7 +230,7 @@ async function parseAllSessions() {
       // Collect per-prompt data for "most expensive prompts"
       // Group consecutive queries under the same user prompt
       let currentPrompt = null;
-      let promptInput = 0, promptOutput = 0, promptCacheCreation = 0, promptCacheRead = 0, promptCost = 0;
+      let promptInput = 0, promptOutput = 0, promptCacheCreation = 0, promptCacheRead = 0, promptCost = 0, promptToolCalls = 0;
       const flushPrompt = () => {
         if (currentPrompt && (promptInput + promptOutput + promptCacheCreation + promptCacheRead) > 0) {
           allPrompts.push({
@@ -241,6 +241,7 @@ async function parseAllSessions() {
             cacheReadTokens: promptCacheRead,
             totalTokens: promptInput + promptOutput + promptCacheCreation + promptCacheRead,
             cost: promptCost,
+            toolCalls: promptToolCalls,
             date,
             sessionId,
             model: primaryModel,
@@ -256,12 +257,14 @@ async function parseAllSessions() {
           promptCacheCreation = 0;
           promptCacheRead = 0;
           promptCost = 0;
+          promptToolCalls = 0;
         }
         promptInput += q.inputTokens;
         promptOutput += q.outputTokens;
         promptCacheCreation += q.cacheCreationTokens;
         promptCacheRead += q.cacheReadTokens;
         promptCost += q.cost;
+        promptToolCalls += Array.isArray(q.toolCalls) ? q.toolCalls.length : 0;
       }
       flushPrompt();
 
@@ -454,17 +457,26 @@ async function parseAllSessions() {
 function generateInsights(sessions, allPrompts, totals) {
   const insights = [];
 
-  // 1. Short, vague messages that cost a lot
-  const shortExpensive = allPrompts.filter(p => p.prompt.trim().length < 30 && p.totalTokens > 100_000);
-  if (shortExpensive.length > 0) {
-    const totalWasted = shortExpensive.reduce((s, p) => s + p.totalTokens, 0);
-    const examples = [...new Set(shortExpensive.map(p => p.prompt.trim()))].slice(0, 4);
+  // 1. Short confirmations that trigger heavy autonomous execution.
+  // Keyed on output + tool calls (the work the message actually caused), NOT on
+  // totalTokens -- which is ~94% cache read and just measures how late in a long
+  // session the message landed (see context-growth / input-heavy insights for that).
+  const outputs = allPrompts.map(p => p.outputTokens).sort((a, b) => a - b);
+  const medianOutput = outputs[Math.floor(outputs.length / 2)] || 0;
+  const heavyConfirms = allPrompts.filter(p => p.prompt.trim().length < 30 && p.outputTokens > medianOutput * 3);
+  if (heavyConfirms.length >= 5 && medianOutput > 0) {
+    const median = (arr) => { const v = arr.slice().sort((a, b) => a - b); return v[Math.floor(v.length / 2)] || 0; };
+    const medTools = median(heavyConfirms.map(p => p.toolCalls || 0));
+    const medOut = median(heavyConfirms.map(p => p.outputTokens));
+    const cohortCost = heavyConfirms.reduce((s, p) => s + p.cost, 0);
+    const costPct = totals.totalCost > 0 ? Math.round((cohortCost / totals.totalCost) * 100) : 0;
+    const examples = [...new Set(heavyConfirms.map(p => p.prompt.trim()))].slice(0, 4);
     insights.push({
-      id: 'vague-prompts',
-      type: 'warning',
-      title: 'Short, vague messages are costing you the most',
-      description: `${shortExpensive.length} times you sent a short message like ${examples.map(e => '"' + e + '"').join(', ')} -- and each message burned at least 100K tokens just trying to figure out what you wanted. Across all ${shortExpensive.length} messages, that adds up to ${fmt(totalWasted)} tokens total -- spent re-reading your conversation, searching files, and making multiple attempts because the instruction was too vague.`,
-      action: 'Try being specific. Instead of "Yes", say "Yes, update the login page and run the tests." It gives Claude a clear target, so it finishes faster and uses fewer tokens.',
+      id: 'heavy-confirmations',
+      type: 'info',
+      title: 'Short confirmations trigger your most expensive runs',
+      description: `${heavyConfirms.length} times a short message like ${examples.map(e => '"' + e + '"').join(', ')} kicked off a long burst of autonomous work -- a median of ${medTools} tool calls and ${fmt(medOut)} tokens written each time. The cost isn't in the typing; it's in the execution those one-liners unleash. Together these ${heavyConfirms.length} messages account for about ${costPct}% of your total spend.`,
+      action: 'Nothing wrong here -- this is just where your spend really lands. When you fire off "go" or "sim execute" on a big plan, that short message is your single heaviest cost trigger. Worth knowing which confirmations are really "spend $40 of autonomous work" before you send them.',
     });
   }
 
